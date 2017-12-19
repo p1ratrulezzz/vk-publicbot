@@ -80,21 +80,34 @@ class Application {
 
       app.bots[bot_config.id] = bot;
 
-      function poll(bot, {server, key, ts}) {
-        let url = 'https://' + server;
+      function poll(bot, pollInfo = {}) {
+        if (pollInfo.server === undefined) {
+          return bot.api.call('messages.getLongPollServer')
+          .then((response) => {
+            app.logger.info('Got new polling server');
+            return poll(bot, response);
+          });
+        }
+
+        app.logger.info('Polling started');
+        let url = 'https://' + pollInfo.server;
         return prequest({
           url: url,
           json: true,
           qs: {
             act: 'a_check',
-            key: key,
-            ts: ts,
+            key: pollInfo.key,
+            ts: pollInfo.ts,
             wait: 25,
             version: 2,
             mode: 2 + 8 + 64
           }
         }).then((response) => {
-          let pNext = Promise.resolve({});
+          if (response.failed && response.failed !== 1) {
+            app.logger.info('+ Longpolling failed. Trying to update connection');
+            return poll(bot);
+          }
+
           if (response.updates != null && response.updates[0] != null) {
             app.logger.info('Got updates');
             app.handleUpdates(bot, response.updates);
@@ -103,31 +116,19 @@ class Application {
             app.logger.info('Timeout reached. Polling again');
           }
 
+          // Try normal poll.
           return poll(bot, {
-            server: server,
-            key: key,
+            server: pollInfo.server,
+            key: pollInfo.key,
             ts: response.ts
           });
         }).catch((err) => {
-          bot.api.call('messages.getLongPollServer')
-          .then((response) => {
-            app.logger.info('Polling started');
-            return poll(bot, response);
-          }).catch((err) => {
-            app.logger.error(err);
-            app.shutdown();
-          })
+          app.logger.error(err);
+          app.shutdown();
         });
       }
 
-      bot.api.call('messages.getLongPollServer')
-      .then((response) => {
-        app.logger.info('Polling started');
-        return poll(bot, response);
-      }).catch((err) => {
-        app.logger.error(err);
-        app.shutdown();
-      })
+      poll(bot);
     });
 
     return pBot;
