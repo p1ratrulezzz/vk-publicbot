@@ -1,15 +1,8 @@
 'use strict';
 
-const COMMAND = 'random';
-
 const random = require('../../modules/random/main').randomAsync;
 
-/**
- *
- * @param app
- * @param bot Telegraf
- */
-function register({app, bot}) {
+function handle({app, bot}) {
   bot.command('/' + COMMAND, ({reply}) => {
     return reply(random(0, 512));
   });
@@ -19,8 +12,9 @@ function register({app, bot}) {
 
 module.exports = {
   enabled: true,
-  command: COMMAND,
+  aliases: ['рандом', 'случайно', 'rnd', 'rand'],
+  cmd: 'random',
   description: 'Get random number between range',
   help: 'Usage: /random min-max',
-  register
+  handle
 }

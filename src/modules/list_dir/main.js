@@ -29,7 +29,7 @@ module.exports = function (directory) {
     let filename = current.slice(0, -3);
     let file     = require(path.join(directory, filename));
 
-    if (file.register !== undefined) {
+    if (file.cmd !== undefined) {
       file.name = file.name || filename;
       output.push(file);
     }
