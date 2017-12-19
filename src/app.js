@@ -109,11 +109,14 @@ class Application {
             ts: response.ts
           });
         }).catch((err) => {
-          return poll(bot, {
-            server: server,
-            key: key,
-            ts: response.ts
-          });
+          bot.api.call('messages.getLongPollServer')
+          .then((response) => {
+            app.logger.info('Polling started');
+            return poll(bot, response);
+          }).catch((err) => {
+            app.logger.error(err);
+            app.shutdown();
+          })
         });
       }
 
@@ -123,6 +126,7 @@ class Application {
         return poll(bot, response);
       }).catch((err) => {
         app.logger.error(err);
+        app.shutdown();
       })
     });
 
