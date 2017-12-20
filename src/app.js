@@ -5,6 +5,9 @@ const logger = require('winston');
 const getFilesInDir = require('./modules/list_dir/main');
 const VKApi = require('node-vkapi');
 const prequest = require('request-promise');
+const Queue = require('better-queue');
+const VKMessage = require('./VKMessage');
+const CleverbotCommand = require('./processors/text/cleverbot');
 
 // Apply quote method.
 RegExp.quote = require("regexp-quote")
@@ -17,6 +20,8 @@ class Application {
    * @public
    */
   constructor () {
+    let app = this;
+
     logger.level = 'debug';
     logger.info('App instance created');
 
@@ -34,7 +39,6 @@ class Application {
 
     for (let bot_id in this.config.bots) {
       this.bots[bot_id] = {
-        bot: null,
         config: this.config.bots[bot_id]
       };
     }
@@ -43,6 +47,31 @@ class Application {
       commands: this.commands,
       text: []
     }
+
+    let queue_options = {
+      maxRetries: 3,
+      retryDelay: 5000,
+      concurrent: 1
+      // maxTimeout: 15000
+    };
+
+    this.queue_inbox = new Queue((job, done) => {
+      app.handleInboxMessage(job.message).then((result) => {
+        done(null, result);
+      }).catch((err) => {
+        app.logger.error(error);
+        throw new Error();
+      });
+    }, queue_options);
+
+    this.queue_outbox = new Queue((job, done) => {
+      app.handleOutboxMessage(job.message).then((result) => {
+        done(null, result);
+      }).catch((err) => {
+        app.logger.error(error);
+        throw new Error();
+      });
+    }, queue_options);
   }
 
   addCommand (command) {
@@ -128,13 +157,18 @@ class Application {
         });
       }
 
+      // Start poll requests
       poll(bot);
     });
 
-    return pBot;
+    return pBot.catch((err) => {
+      app.logger.error(err);
+      app.shutdown();
+    });
   }
 
-  replyMessage(bot, message) {
+  replyMessage(message) {
+    let bot = message.extra.bot;
     return bot.api.call('messages.setActivity', {
       user_id: message.response_for.from_id,
       type: 'typing'
@@ -148,16 +182,45 @@ class Application {
       message_options.user_id = message.response_for.from_id;
 
       return bot.api.call('messages.send', message_options);
+    }).catch((err) => {
+      app.logger.error(err);
     });
   }
 
-  handleMessage(bot, message) {
+  handleOutboxMessage(message) {
     let app = this;
+    return app.replyMessage(message);
+  }
 
-    return this.replyMessage(bot, {
-      text: 'Привет. Я бот, но я ничего еще не умею, потому что меня не доделали :(. Возвращайтесь совсем скоро, возможно, меня к тому времени допилят. Но это не точно.',
-      response_for: message
+  handleInboxMessage(message) {
+    let app = this;
+    let bot = message.extra.bot;
+
+    let response_message = new VKMessage({
+      response_for: message,
+      extra: message.extra
     });
+
+    return CleverbotCommand.handle(response_message).then((reply_message) => {
+      return app.addOutbox(reply_message);
+    }).catch((err) => {
+      app.logger.error(err);
+
+      response_message.text = 'An error occured. Contact administrator.'
+      return app.addOutbox(response_message);
+    });
+  }
+
+  addInbox(message) {
+    let app = this;
+    app.logger.info('Recieved inbox message');
+    return this.queue_inbox.push({message: message});
+  }
+
+  addOutbox(message) {
+    let app = this;
+    app.logger.info('Added outbox message');
+    return this.queue_outbox.push({message: message});
   }
 
   handleUpdates(bot, updates) {
@@ -166,7 +229,7 @@ class Application {
       // app.logger.info('Got update with code ' + update[VK_EVENT_TYPE]);
       // If message is not the one sent by bot.
       if (update[VK_EVENT_TYPE] == VK_EVENT_NEWMESSAGE) {
-        let message = {
+        let message = new VKMessage({
           from_id: update[3],
           flags: update[2],
           peer_id: update[3],
@@ -178,11 +241,11 @@ class Application {
             bot: bot,
             app: app
           },
-        };
+        });
 
         // Only handle messages got from other users, not bot's own.
-        if ((message.flags & 2) === 0 && (message.flags & 1) !== 0) {
-          app.handleMessage(bot, message);
+        if (!message.isMyOwn() && message.isUnread()) {
+          app.addInbox(message);
         }
       }
     });
@@ -234,12 +297,8 @@ class Application {
     return pContinue;
   }
 
-  stop() {
-    // this.bot.stop();
-  }
-
   shutdown() {
-    process.shutdown();
+    process.exit(0);
   }
 }
 
@@ -259,7 +318,6 @@ app
  * Debugging on app stop.
  */
 process.on('SIGINT', () => {
-  app.stop();
   logger.info('= SIGINT received. Saving data and shutting down.');
 
   process.exit(0);

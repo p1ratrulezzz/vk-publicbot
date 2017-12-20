@@ -2,12 +2,10 @@
 
 const random = require('../../modules/random/main').randomAsync;
 
-function handle({app, bot}) {
-  bot.command('/' + COMMAND, ({reply}) => {
-    return reply(random(0, 512));
-  });
+function handle(response_message) {
+  response_message.text = random(0, 512);
 
-  return Promise.resolve(app);
+  return Promise.resolve(response_message);
 }
 
 module.exports = {
