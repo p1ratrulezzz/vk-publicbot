@@ -7,6 +7,7 @@ const VKApi = require('node-vkapi');
 const prequest = require('request-promise');
 const Queue = require('better-queue');
 const VKMessage = require('./VKMessage');
+const VKBot = require('./VKBot');
 const CleverbotCommand = require('./processors/text/cleverbot');
 
 // Apply quote method.
@@ -25,14 +26,9 @@ class Application {
     logger.level = 'debug';
     logger.info('App instance created');
 
-    this.bot = '';
-
-    this.tgresolver = '';
-
     this.commands = {};
 
     this.logger = logger;
-    this.self = this;
     this.config = config;
 
     this.bots = {};
@@ -51,7 +47,7 @@ class Application {
     let queue_options = {
       maxRetries: 3,
       retryDelay: 5000,
-      concurrent: 1
+      concurrent: 3
       // maxTimeout: 15000
     };
 
@@ -96,18 +92,23 @@ class Application {
   }
 
   createBot(bot_config) {
+    let bot = new VKBot();
     let app = this;
+
+    // @fixme: method
+    bot['_app'] = app;
+    bot['_config'] = bot;
+
     let pBot = Promise.resolve(app);
     pBot.then((app) => {
-      let bot = {
-        api: new VKApi({
-          token: bot_config.token,
-          apiVersion: app.config.vk.version
-        }),
-        name: bot_config.name
-      }
+      bot.api = new VKApi({
+        token: bot_config.token,
+        apiVersion: app.config.vk.version
+      });
 
-      app.bots[bot_config.id] = bot;
+      bot.name = bot_config.name;
+
+      // app.bots[bot_config.id] = bot;
 
       function poll(bot, pollInfo = {}) {
         if (pollInfo.server === undefined) {
@@ -157,18 +158,29 @@ class Application {
         });
       }
 
-      // Start poll requests
-      poll(bot);
+      // Start poll requests after processing unread messages
+      return bot.beforePoll().then(({err, result}) => {
+        return poll(bot);
+      });
     });
 
-    return pBot.catch((err) => {
+    pBot = pBot.catch((err) => {
       app.logger.error(err);
       app.shutdown();
     });
+
+    bot.pollPromise = pBot;
+
+    return bot;
   }
 
+  /**
+   *
+   * @param message VKMessage
+   * @returns {Promise.<TResult>}
+   */
   replyMessage(message) {
-    let bot = message.extra.bot;
+    let bot = message.getBot();
     return bot.api.call('messages.setActivity', {
       user_id: message.response_for.from_id,
       type: 'typing'
@@ -181,7 +193,7 @@ class Application {
       // @todo: Handle attachments.
       message_options.user_id = message.response_for.from_id;
 
-      return bot.api.call('messages.send', message_options);
+      return bot.getApi().call('messages.send', message_options);
     }).catch((err) => {
       app.logger.error(err);
     });
@@ -193,20 +205,34 @@ class Application {
   }
 
   handleInboxMessage(message) {
-    let app = this;
-    let bot = message.extra.bot;
+    let app = message.getApp();
+    let bot = message.getBot();
 
     let response_message = new VKMessage({
       response_for: message,
       extra: message.extra
-    });
+    }, bot);
 
+    delete response_message['extra'];
+
+
+    /*
+      Commmands processors.
+     */
+    // @todo: Add command processor here.
+    // Command processor
+    // @todo: Add command processor here.
+
+    /*
+      Fallback processors
+     */
+    // @todo: Move this somewhere
     return CleverbotCommand.handle(response_message).then((reply_message) => {
       return app.addOutbox(reply_message);
     }).catch((err) => {
       app.logger.error(err);
 
-      response_message.text = 'An error occured. Contact administrator.'
+      response_message.text = 'BOT Error: An error occured. Contact the administrator.'
       return app.addOutbox(response_message);
     });
   }
@@ -226,7 +252,7 @@ class Application {
   handleUpdates(bot, updates) {
     let app = this;
     updates.forEach((update) => {
-      // app.logger.info('Got update with code ' + update[VK_EVENT_TYPE]);
+      app.logger.debug('Got update with code ' + update[VK_EVENT_TYPE]);
       // If message is not the one sent by bot.
       if (update[VK_EVENT_TYPE] == VK_EVENT_NEWMESSAGE) {
         let message = new VKMessage({
@@ -236,16 +262,13 @@ class Application {
           timestamp: update[4],
           msg_id: update[1],
           text: update[5],
-          attachments: update[6],
-          extra: {
-            bot: bot,
-            app: app
-          },
-        });
+          attachments: update[6]
+        }, bot);
 
         // Only handle messages got from other users, not bot's own.
         if (!message.isMyOwn() && message.isUnread()) {
           app.addInbox(message);
+          app.logger.debug('Added message to inbox queue');
         }
       }
     });
@@ -268,21 +291,6 @@ class Application {
         });
       });
     });
-
-    // Reading all text processors in chain.
-    // pContinue.then((app) => {
-    //   // Add text processors.
-    //   bot.on('text', (ctx) => {
-    //     let pContinue = Promise.resolve(ctx);
-    //     this.processors.text.forEach((processor) => {
-    //       pContinue = pContinue.then((context) => {
-    //         return processor.process(ctx);
-    //       });
-    //     });
-    //
-    //     return pContinue;
-    //   });
-    // });
 
     pContinue = pContinue.then(() => {
       // Creating and starting bots.

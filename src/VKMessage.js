@@ -3,18 +3,47 @@
 class VKMessage {
   /**
    *
-   * @public
+   * @param msg {*}
+   * @param bot VKBot
+   * @returns VKMessage
    */
-  constructor (msg) {
-    this.app = msg.extra.app;
-    this.bot = msg.extra.bot;
-    this.type = 'inbox';
+  constructor (msg, bot) {
+    /**
+     * @protected
+     */
+    this._app = bot.getApp();
+
+    /**
+     * @protected
+     */
+    this._bot = bot;
+
+    this.extra = msg.extra || {};
+
+    // Remove not
+    this.setType('inbox');
 
     return Object.assign(this, msg);
   }
 
   hasCommand() {
 
+  }
+
+  /**
+   *
+   * @returns Application
+   */
+  getApp() {
+    return this._app;
+  }
+
+  /**
+   *
+   * @returns {*}
+   */
+  getBot() {
+    return this._bot;
   }
 
   setType(type) {

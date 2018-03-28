@@ -8,13 +8,13 @@ function handle(response_message) {
    *
    * @type Application
    */
-  let app = response_message.app;
+  let app = response_message.getApp();
 
   /**
    *
    * @type {string|*}
    */
-  let bot = response_message.bot;
+  let bot = response_message.getBot();
 
   /**
    * @type VKMessage
